@@ -1,0 +1,83 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install ruff && ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: auction, POSTGRES_PASSWORD: auction, POSTGRES_DB: auction }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U auction" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://auction:auction@localhost:5432/auction
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -e ".[dev,postgres]"
+      - run: pytest -v
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t realtime-auction .
+
+  load-test:
+    runs-on: ubuntu-latest
+    needs: [test]
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: auction, POSTGRES_PASSWORD: auction, POSTGRES_DB: auction }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U auction" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://auction:auction@localhost:5432/auction
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -e ".[dev,postgres]"
+      - name: Start two API instances
+        run: |
+          uvicorn app.main:app_factory --factory --port 8000 --log-level warning &
+          uvicorn app.main:app_factory --factory --port 8001 --log-level warning &
+          for p in 8000 8001; do
+            for i in $(seq 30); do curl -sf localhost:$p/health && break; sleep 1; done
+          done
+      - name: Simulate 1,200 bid events across both instances
+        run: python scripts/simulate_bids.py --urls http://localhost:8000,http://localhost:8001 --out results.json
+      - name: Summary
+        if: always()
+        run: |
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"; cat results.json >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: load-test-results, path: results.json }

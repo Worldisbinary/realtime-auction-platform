@@ -1,0 +1,24 @@
+x-api: &api
+  build: .
+  environment:
+    DATABASE_URL: postgresql+psycopg://auction:auction@postgres:5432/auction
+    REDIS_URL: redis://redis:6379/0
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: auction, POSTGRES_PASSWORD: auction, POSTGRES_DB: auction }
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U auction"], interval: 3s, retries: 20 }
+  redis:
+    image: redis:7-alpine
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 3s, retries: 20 }
+  api1: *api
+  api2: *api
+  nginx:
+    image: nginx:1.27-alpine
+    ports: ["8080:80"]
+    volumes: ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro"]
+    depends_on: [api1, api2]
