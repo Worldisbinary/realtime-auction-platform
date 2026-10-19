@@ -43,6 +43,22 @@ A bid is written to Postgres inside a transaction. The row update only succeeds 
 
 CI runs the tests against real PostgreSQL 16 and Redis 7 service containers. It then starts two API instances and runs [scripts/simulate_bids.py](scripts/simulate_bids.py), which sends 1,000+ bids over WebSockets through both instances. The script reports throughput, p50/p95 latency, whether every client converged to the same final state, and whether the price history is monotonic. Results are uploaded as a CI artifact.
 
+### Load test results (CI run [39266877367](https://github.com/Worldisbinary/realtime-auction-platform/actions/runs/39266877367), GitHub-hosted runner)
+
+| Metric | Result |
+|---|---|
+| Bid events | 1,200 from 50 WebSocket clients across 2 API instances |
+| Outcomes | 91 accepted, 1,093 rejected as too low, 16 rejected as already leading |
+| Throughput | 215 bids/s (5.58 s total) |
+| Latency | p50 82.6 ms, p95 281.9 ms |
+| Clients converged to the same final state | 50 / 50 |
+| Both instances agree | yes |
+| Persisted bids = accepted bids | yes (no lost updates) |
+| Price history strictly increasing | yes |
+| Optimistic-lock conflicts resolved by retry | 696 |
+
+Most bids are rejected on purpose: 50 clients race to outbid each other, so most bids arrive after the price has already moved past them.
+
 ## Run it
 
 ```bash
